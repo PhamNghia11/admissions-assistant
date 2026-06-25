@@ -1,0 +1,254 @@
+# X-Agent Workflow & Callback Retry
+
+## 1. Sơ đồ tổng quan - Agent Routing
+
+```mermaid
+flowchart TD
+    classDef router fill:#7c3aed,stroke:#a855f7,color:#fff,stroke-width:2px
+    classDef worker fill:#0ea5e9,stroke:#38bdf8,color:#fff,stroke-width:2px
+    classDef answer fill:#22c55e,stroke:#4ade80,color:#fff,stroke-width:2px
+    classDef tool fill:#f59e0b,stroke:#fbbf24,color:#000,stroke-width:2px
+    classDef data fill:#6366f1,stroke:#818cf8,color:#fff,stroke-width:2px
+
+    User((👤 Người dùng))
+    UI["🌐 ADK Web UI<br/>localhost:8000"]
+
+    User <-->|Hỏi & Nhận trả lời| UI
+
+    subgraph ROUTING ["Phase 1: Định tuyến"]
+        Router{"🧠 router_agent<br/>Phân loại ý định"}:::router
+    end
+
+    UI <--> Router
+
+    subgraph WORKERS ["Phase 2: Xử lý chuyên môn (Tool-First)"]
+        direction LR
+        ToolA["🔍 tool_agent<br/>Internet Search"]:::worker
+        RagA["📚 rag_agent<br/>Kiến thức nội bộ"]:::worker
+        VisA["👁️ vision_agent<br/>Đọc tài liệu"]:::worker
+    end
+
+    AnsA["💬 answer_agent<br/>Xã giao"]:::answer
+
+    Router -->|"Giá cả, Tin tức, Thời sự, Thời tiết,<br/>Lịch sử, Khoa học, Văn hóa, Kiến thức"| ToolA
+    Router -->|"Luật, Y tế,<br/>Tuyển sinh"| RagA
+    Router -->|"Đọc PDF/Word"| VisA
+    Router -->|"Chào hỏi,<br/>Cảm ơn"| AnsA
+
+    subgraph TOOLS ["Phase 3: Gọi công cụ"]
+        direction LR
+        WS["web_search"]:::tool
+        WDS["web_deep_search"]:::tool
+        BU["browse_url"]:::tool
+        SL["search_legal"]:::tool
+        SW["search_wiki"]:::tool
+        SA["search_admissions"]:::tool
+        SH["search_health"]:::tool
+        PD["parse_document"]:::tool
+        SM["save_memory"]:::tool
+        RM["recall_memory"]:::tool
+    end
+
+    ToolA --> WS & WDS & BU & SM & RM
+    RagA --> SL & SW & SA & SH
+    VisA --> PD
+
+    subgraph DATA ["Nguồn dữ liệu"]
+        direction LR
+        DDG["🦆 DuckDuckGo API"]:::data
+        Lance["💎 LanceDB Vector"]:::data
+    end
+
+    WS & WDS --> DDG
+    SL & SW & SA & SH & SM & RM --> Lance
+
+    subgraph RESPONSE ["Phase 4: Phản hồi"]
+        LLM["⚡ Gemini Flash<br/>Tổng hợp + Trích dẫn nguồn"]
+    end
+
+    TOOLS -->|Kết quả| LLM
+    AnsA --> LLM
+    LLM -->|"Câu trả lời + [Nguồn](URL)"| UI
+```
+
+---
+
+## 2. Sơ đồ Callback Retry chi tiết
+
+```mermaid
+flowchart TD
+    classDef success fill:#22c55e,stroke:#4ade80,color:#fff,stroke-width:2px
+    classDef error fill:#ef4444,stroke:#f87171,color:#fff,stroke-width:2px
+    classDef retry fill:#f59e0b,stroke:#fbbf24,color:#000,stroke-width:2px
+    classDef adk fill:#7c3aed,stroke:#a855f7,color:#fff,stroke-width:2px
+
+    Start["🤖 tool_agent gọi web_search<br/>args: query='giá đất hôm nay'"]
+
+    subgraph ADK_FRAMEWORK ["ADK Framework (Tầng Framework)"]
+        direction TB
+        Call["FunctionTool.run_async()<br/>Thực thi hàm web_search"]
+        
+        Check{Kết quả?}
+        
+        Call --> Check
+        
+        Check -->|"✅ Thành công"| OK["Trả kết quả về LLM"]:::success
+
+        Check -->|"❌ Exception!"| CB["on_tool_error_callback()<br/>Bắt lỗi ở tầng framework"]:::adk
+    end
+
+    Start --> Call
+
+    subgraph RETRY_MANAGER ["retry_manager.py - Xử lý retry"]
+        direction TB
+        
+        Classify["Phân loại lỗi<br/>DDGSException → SEARCH_ENGINE_ERROR<br/>ConnectionError → NETWORK_ERROR"]
+        
+        Retryable{"Lỗi có trong<br/>RETRYABLE_EXCEPTIONS?"}
+        
+        Config["Đọc cấu hình<br/>web_search: max=3, delay=1s"]
+        
+        Attempt["Lần thử hiện tại<br/>attempt = 1"]
+        
+        Delay["⏱️ Exponential Backoff<br/>delay = 1s × 2^attempt<br/>Lần 1: 1s | Lần 2: 2s | Lần 3: 4s"]:::retry
+        
+        ReInvoke["🔄 Re-invoke func(**args)<br/>Gọi lại web_search(query)"]:::retry
+        
+        ReCheck{"Kết quả<br/>lần retry?"}
+        
+        RetryOK["✅ Trả kết quả về LLM<br/>In: RETRY OK"]:::success
+        
+        MaxCheck{"Đã hết<br/>lượt retry?"}
+        
+        NextAttempt["attempt += 1"]:::retry
+        
+        ErrorDict["📦 Trả Error Dict<br/>{status: failed,<br/>tool: web_search,<br/>error_type: SEARCH_ENGINE_ERROR,<br/>retry_attempts: 3}"]:::error
+        
+        NonRetryable["📦 Trả Error Dict ngay<br/>{error_type: NON_RETRYABLE}"]:::error
+
+        CB --> Classify
+        Classify --> Retryable
+        
+        Retryable -->|"❌ Không<br/>(ValueError, etc.)"| NonRetryable
+        Retryable -->|"✅ Có<br/>(DDGSException, etc.)"| Config
+        
+        Config --> Attempt --> Delay --> ReInvoke --> ReCheck
+        
+        ReCheck -->|"✅ Thành công"| RetryOK
+        ReCheck -->|"❌ Vẫn lỗi"| MaxCheck
+        
+        MaxCheck -->|"Chưa hết"| NextAttempt --> Delay
+        MaxCheck -->|"Đã hết 3 lần"| ErrorDict
+    end
+
+    subgraph LLM_RESPONSE ["LLM xử lý kết quả"]
+        direction TB
+        ReadResult["Gemini Flash đọc kết quả"]
+        
+        SuccessPath["Tổng hợp thông tin<br/>Trích dẫn nguồn URL<br/>'Theo [VnExpress](url), ...'"]:::success
+        
+        FailPath["Đọc Error Dict<br/>→ 'Hệ thống đang bận,<br/>vui lòng thử lại sau.'"]:::error
+    end
+
+    OK --> ReadResult
+    RetryOK --> ReadResult
+    ErrorDict --> ReadResult
+    NonRetryable --> ReadResult
+    
+    ReadResult -->|"Có dữ liệu"| SuccessPath
+    ReadResult -->|"status: failed"| FailPath
+
+    SuccessPath --> Final["👤 Hiển thị cho người dùng"]
+    FailPath --> Final
+```
+
+---
+
+## 3. Ví dụ thực tế: Tắt mạng khi search
+
+```mermaid
+sequenceDiagram
+    actor User as 👤 Người dùng
+    participant Router as 🧠 router_agent
+    participant Tool as 🔍 tool_agent
+    participant Func as web_search()
+    participant DDG as 🦆 DuckDuckGo
+    participant Retry as 🔄 on_tool_error
+    participant LLM as ⚡ Gemini Flash
+
+    User->>Router: "giá đất hôm nay"
+    Router->>Router: Phân loại: Giá cả → tool_agent
+    Router->>Tool: transfer_to_agent
+
+    Tool->>LLM: Quyết định tool
+    LLM-->>Tool: Gọi web_search("giá đất hôm nay")
+
+    Tool->>Func: web_search("giá đất hôm nay")
+    Func->>DDG: HTTP Request
+    
+    Note over DDG: ❌ Mất mạng!
+    DDG--xFunc: ConnectError
+    Func--xTool: DDGSException
+
+    Note over Retry: ADK bắt Exception<br/>→ Gọi callback
+
+    Tool->>Retry: on_tool_error(tool, args, ctx, error)
+    
+    Retry->>Retry: DDGSException ∈ RETRYABLE? ✅
+    Retry->>Retry: Config: max=3, delay=1s
+
+    rect rgb(255, 200, 50)
+        Note over Retry,DDG: Retry Loop
+        
+        Retry->>Retry: ⏱️ Chờ 1.0s
+        Retry->>Func: Re-invoke web_search("giá đất hôm nay")
+        Func->>DDG: HTTP Request
+        DDG--xFunc: ❌ Vẫn lỗi
+        
+        Retry->>Retry: ⏱️ Chờ 2.0s
+        Retry->>Func: Re-invoke lần 2
+        Func->>DDG: HTTP Request
+        DDG--xFunc: ❌ Vẫn lỗi
+        
+        Retry->>Retry: ⏱️ Chờ 4.0s
+        Retry->>Func: Re-invoke lần 3
+        Func->>DDG: HTTP Request
+        DDG--xFunc: ❌ Vẫn lỗi
+    end
+
+    Retry-->>Tool: {status: "failed", retry_attempts: 3}
+    
+    Tool->>LLM: Đọc Error Dict
+    LLM-->>User: "Hệ thống đang bận, vui lòng thử lại sau."
+```
+
+---
+
+## 4. Bảng cấu hình Retry
+
+| Tool | Max Retries | Delay Pattern | Tổng thời gian chờ |
+|------|:-----------:|:-------------:|:-------------------:|
+| web_search | 3 | 1s → 2s → 4s | ~7s |
+| web_deep_search | 3 | 1s → 2s → 4s | ~7s |
+| browse_url | 3 | 1s → 2s → 4s | ~7s |
+| search_legal | 2 | 0.5s → 1s | ~1.5s |
+| search_wiki | 2 | 0.5s → 1s | ~1.5s |
+| search_admissions | 2 | 0.5s → 1s | ~1.5s |
+| search_health | 2 | 0.5s → 1s | ~1.5s |
+| save_memory | 2 | 0.5s → 1s | ~1.5s |
+| recall_memory | 2 | 0.5s → 1s | ~1.5s |
+
+## 5. Retryable Exceptions
+
+| Exception | Nguồn | Khi nào xảy ra |
+|-----------|-------|----------------|
+| `DDGSException` | duckduckgo-search | Mất mạng khi search |
+| `RatelimitException` | duckduckgo-search | Bị giới hạn tốc độ |
+| `DDGSTimeoutException` | duckduckgo-search | Search quá lâu |
+| `ConnectionError` | Python built-in | Lỗi kết nối chung |
+| `TimeoutError` | Python built-in | Hết thời gian chờ |
+| `OSError` | Python built-in | Lỗi hệ điều hành |
+| `httpx.ConnectError` | httpx | Mất mạng khi browse_url |
+| `httpx.TimeoutException` | httpx | Browse URL quá lâu |
+| `requests.ConnectionError` | requests | Lỗi kết nối HTTP |
+| `requests.Timeout` | requests | HTTP timeout |

@@ -1,0 +1,45 @@
+# ADK Storage
+.adk/
+.gemini/
+
+# Knowledge Bases (Very Large)
+my_agent/data/
+legal_kb/
+wiki_kb/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.venv/
+.env
+**/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Auto-Ingest (co the chua du lieu nhay cam)
+hot_folder/
+
+# Scratch / Temp
+scratch/
+.scratch/
+
+# Databases & Logs (Dynamic files)
+users.db
+*.db
+auth_server.log
+*.log
+
+# Raw Data & Dumps (Heavy or private files)
+RAW/
+project_context_for_claude.txt
+
+# Node / Frontend
+node_modules/
+dist/
+ui-agent/node_modules/
+ui-agent/dist/
