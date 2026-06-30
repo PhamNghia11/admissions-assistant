@@ -102,24 +102,41 @@ def main():
     
     print(f"Tổng số tài liệu trích xuất unique: {len(all_documents)} với Metadata. Chuẩn bị Semantic Chunking.", flush=True)
     
-    # 2. Khởi tạo RAG Engine và xóa bảng cũ trước khi nạp mới
+    # 2. Khởi tạo RAG Engine
     engine = RAGManager()
     db = engine.get_db_connection(topic)
     table_name = f"{topic}_data"
+    temp_table_name = f"{topic}_data_temp"
     
+    # Dọn dẹp bảng tạm nếu còn sót lại từ lần chạy lỗi trước
     # Sử dụng list_tables() thay cho table_names() bị deprecated
-    if table_name in db.list_tables():
-        print(f"--- Đang làm sạch bảng cũ '{table_name}' để nạp mới hoàn toàn ---", flush=True)
-        db.drop_table(table_name)
+    if temp_table_name in db.list_tables():
+        print(f"--- Dọn dẹp bảng tạm '{temp_table_name}' từ lần chạy trước ---", flush=True)
+        db.drop_table(temp_table_name)
         
-    # 3. Nạp tài liệu bằng phương pháp append_documents (chia batch nhỏ để in log real-time)
-    print(f"\n--- Đang thực hiện Vector Embedding và ghi CSDL ---", flush=True)
+    # 3. Nạp tài liệu bằng phương pháp append_documents vào bảng tạm (chia batch nhỏ để in log)
+    print(f"\n--- Đang thực hiện Vector Embedding và ghi vào CSDL tạm '{temp_table_name}' ---", flush=True)
     try:
-        # Nạp với doc_batch_size=10 để in log tiến độ sau mỗi 10 tài liệu
-        total_chunks = engine.append_documents(all_documents, topic, doc_batch_size=10)
-        print(f"\n✅ THÀNH CÔNG! Đã nạp thành công {total_chunks} chunks vào CSDL '{topic}'.", flush=True)
+        # Nạp dữ liệu vào bảng tạm
+        total_chunks = engine.append_documents(all_documents, topic, doc_batch_size=10, table_name=temp_table_name)
+        print(f"-> Đã nạp thành công {total_chunks} chunks vào bảng tạm.", flush=True)
+        
+        # 4. Atomic Swap: Ghi đè bảng tạm sang bảng chính bằng mode="overwrite"
+        print(f"--- Đang thực hiện hoán đổi nguyên tử (Atomic Swap) sang bảng chính '{table_name}' ---", flush=True)
+        temp_table = db.open_table(temp_table_name)
+        arrow_data = temp_table.to_arrow()
+        db.create_table(table_name, data=arrow_data, mode="overwrite")
+        
+        # Dọn dẹp bảng tạm sau khi swap thành công
+        db.drop_table(temp_table_name)
+        
+        print(f"\n✅ THÀNH CÔNG! Đã cập nhật thành công {total_chunks} chunks vào CSDL '{table_name}' mà không bị gián đoạn.", flush=True)
     except Exception as e:
-        print(f"Lỗi quá trình tạo index: {e}", flush=True)
+        print(f"❌ Lỗi trong quá trình tạo index: {e}", flush=True)
+        # Nếu có lỗi xảy ra, dọn dẹp bảng tạm và bảo toàn dữ liệu ở bảng chính
+        if temp_table_name in db.list_tables():
+            print(f"--- Đang dọn dẹp bảng tạm '{temp_table_name}' do xảy ra lỗi ---", flush=True)
+            db.drop_table(temp_table_name)
 
 if __name__ == "__main__":
     main()

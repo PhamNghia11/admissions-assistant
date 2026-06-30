@@ -232,6 +232,7 @@ sequenceDiagram
 9. **Telemetry / Trace Log**: Mỗi lượt agent kết thúc in `[TRACE LOG]` tổng kết latency từng tool và tổng thời gian chạy.
 10. **File Upload thực tế (ADK Artifacts)** *(mới)*: Người dùng đính kèm tệp tin → Frontend Base64 hóa và upload lên ADK Artifact Store qua `POST /artifacts` trước khi gửi câu hỏi. `vision_agent` dùng `load_artifacts_tool` để nhận diện tệp, sau đó gọi `parse_document` để trích xuất nội dung PDF/DOCX/TXT/CSV.
 11. **Markdown & Bảng Premium Renderer** *(mới)*: `ChatMessage.tsx` tích hợp bộ parser thuần Regex, tự động convert bảng Markdown thô thành bảng HTML Premium (bo góc, bóng mờ, hàng xen kẽ màu, hover hiệu ứng). Hỗ trợ thêm: in đậm, in nghiêng, inline code, danh sách, tiêu đề phụ.
+12. **Atomic ETL Ingestion (Staging & Swap)** *(mới)*: Tiến trình nạp dữ liệu tuyển sinh sử dụng bảng tạm (`admissions_data_temp`) làm vùng đệm để tránh gián đoạn dịch vụ (Zero Downtime) và chống lỗi dữ liệu dở dang hoặc trùng lặp khi server sập giữa chừng. Khi nạp thành công hoàn toàn, LanceDB sẽ thực hiện hoán đổi nguyên tử (Atomic Swap) sang bảng chính.
 
 ---
 

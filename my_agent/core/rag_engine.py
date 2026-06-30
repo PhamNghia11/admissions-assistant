@@ -240,7 +240,7 @@ class RAGManager:
         return len(all_chunks)
 
     def append_documents(self, documents, topic, chunk_size=1000, chunk_overlap=200,
-                         doc_batch_size=500, embed_batch_size=128):
+                         doc_batch_size=500, embed_batch_size=128, table_name=None):
         """Append new documents to an existing topic table in batches to save memory."""
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
@@ -249,7 +249,8 @@ class RAGManager:
         )
 
         db = self.get_db_connection(topic)
-        table_name = f"{topic}_data"
+        if table_name is None:
+            table_name = f"{topic}_data"
         model = self._ensure_model()
         total_chunks = 0
 

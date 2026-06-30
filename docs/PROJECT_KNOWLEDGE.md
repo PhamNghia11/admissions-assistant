@@ -80,7 +80,7 @@ D:\agent
 |-- scripts/
 |   |-- auto_watcher.py            # Theo dõi thư mục nóng và tự nạp dữ liệu
 |   |-- auto_pipeline.ps1          # Pipeline nạp dữ liệu hàng loạt
-|   |-- ingest_admissions.py       # Làm mới bộ dữ liệu tuyển sinh vào RAG (BUV, BKA, BMU)
+|   |-- ingest_admissions.py       # Làm mới bộ dữ liệu tuyển sinh vào RAG sử dụng cơ chế bảng tạm và hoán đổi nguyên tử (Staging & Atomic Swap)
 |   |-- organize_gdu_files.py      # Chuẩn hóa dữ liệu thô GDU vào cấu trúc 4 cấp của trường
 |   |-- ingest_gdu_classified.py   # Phân tích Word, PDF, Excel, Q&A GDU và nạp nối tiếp vào DB
 |   |-- db_summary.py              # Thống kê số lượng chunks tuyển sinh của từng trường trong DB
@@ -164,7 +164,7 @@ User input
 | `my_agent/auth/database.py` | SQLite auth storage |
 | `my_agent/core/guardrail.py` | Guardrail and telemetry callbacks |
 | `my_agent/core/retry_manager.py` | Retry callbacks |
-| `my_agent/core/rag_engine.py` | Hybrid RAG engine |
+| `my_agent/core/rag_engine.py` | Hybrid RAG engine (hỗ trợ nạp bảng tạm - staging table) |
 | `my_agent/application/assistant_application.py` | Tool implementations |
 | `ui-agent/src/app/App.tsx` | React app shell and SSE streaming |
 | `ui-agent/src/app/components/AuthModal.tsx` | Login/register modal |
